@@ -979,3 +979,44 @@ notify pgrst, 'reload schema';
 -- Kosong (null, baris lama) = id.
 alter table public.invoices add column if not exists lang text check (lang in ('id','en'));
 notify pgrst, 'reload schema';
+
+-- ============ v28: verifikasi chat id Telegram anggota lewat kode /link (aman dijalankan ulang) ============
+-- Opsional, butuh v22. Chat id yang diisi anggota sendiri baru menerima laporan/pengingat setelah
+-- diverifikasi: Profil → Notifikasi Telegram menampilkan kode sekali pakai, anggota mengirim
+-- `/link <kode>` ke bot dari chat tujuan (pribadi, atau grup sambil menyebut/membalas bot), lalu bot
+-- mencatat chat id itu. Chat id yang diisi admin dianggap terverifikasi. Kode hanya disimpan sebagai
+-- sha256, berlaku 10 menit, sekali pakai, dan tidak pernah ikut cadangan. /link TIDAK memberi akses bot.
+-- Tanpa bagian ini perilaku tetap seperti v22 (semua chat id langsung dipakai).
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'notify_recipients' and column_name = 'verified_at'
+  ) then
+    alter table public.notify_recipients add column verified_at timestamptz;
+    -- Baris lama yang terakhir disimpan admin tetap terverifikasi; yang terakhir diisi anggota harus /link.
+    if to_regclass('public.activity_log') is not null then
+      update public.notify_recipients r set verified_at = r.updated_at
+      where coalesce((
+        select a.action from public.activity_log a
+        where a.action in ('notify.update', 'notify.self_update')
+          and a.detail ->> 'user_id' = r.user_id::text
+        order by a.created_at desc
+        limit 1
+      ), 'notify.update') = 'notify.update';
+    else
+      update public.notify_recipients set verified_at = updated_at;
+    end if;
+  end if;
+end $$;
+
+create table if not exists public.notify_link_codes (
+  user_id uuid primary key references public.app_users(id) on delete cascade,
+  code_hash text not null unique,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+revoke all on public.notify_link_codes from anon, authenticated;
+grant all on public.notify_link_codes to service_role;
+alter table public.notify_link_codes enable row level security;
+notify pgrst, 'reload schema';

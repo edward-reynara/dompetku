@@ -1388,6 +1388,8 @@ export type Database = {
           send_reminders: boolean;
           created_at: string;
           updated_at: string;
+          /** v28 (optional column): null = member-set chat waiting for /link. */
+          verified_at?: string | null;
         };
         Insert: {
           user_id: string;
@@ -1397,6 +1399,7 @@ export type Database = {
           send_reminders?: boolean;
           created_at?: string;
           updated_at?: string;
+          verified_at?: string | null;
         };
         Update: {
           user_id?: string;
@@ -1406,10 +1409,26 @@ export type Database = {
           send_reminders?: boolean;
           created_at?: string;
           updated_at?: string;
+          verified_at?: string | null;
         };
         Relationships: [
           {
             foreignKeyName: "notify_recipients_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: true;
+            referencedRelation: "app_users";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      /** v28 (optional table): one-time /link code hash per member (never backed up). */
+      notify_link_codes: {
+        Row: { user_id: string; code_hash: string; expires_at: string; created_at: string };
+        Insert: { user_id: string; code_hash: string; expires_at: string; created_at?: string };
+        Update: { user_id?: string; code_hash?: string; expires_at?: string; created_at?: string };
+        Relationships: [
+          {
+            foreignKeyName: "notify_link_codes_user_id_fkey";
             columns: ["user_id"];
             isOneToOne: true;
             referencedRelation: "app_users";

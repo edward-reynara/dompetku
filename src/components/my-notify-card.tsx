@@ -1,15 +1,16 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useState, type FormEvent } from "react";
-import { BellRing } from "lucide-react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { BellRing, CheckCircle2, Copy } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { saveMyNotifyFn } from "@/lib/notify.functions";
+import { createMyLinkCodeFn, saveMyNotifyFn } from "@/lib/notify.functions";
 import { normalizeChatId } from "@/lib/notify";
 import { errMsg, invalidateFor, myNotifyQuery } from "@/lib/queries";
 import { useI18n } from "@/lib/i18n";
@@ -22,13 +23,17 @@ import { useI18n } from "@/lib/i18n";
 export function MyNotifyCard() {
   const { t } = useI18n();
   const qc = useQueryClient();
-  const q = useQuery(myNotifyQuery());
+  // v28 (#133): while a /link code is shown, poll so the card notices when the bot verified the chat.
+  const [link, setLink] = useState<{ code: string; expires_at: string } | null>(null);
+  const q = useQuery({ ...myNotifyQuery(), refetchInterval: link ? 5000 : false });
   const save = useServerFn(saveMyNotifyFn);
+  const createCode = useServerFn(createMyLinkCodeFn);
   const [chatId, setChatId] = useState("");
   const [report, setReport] = useState(true);
   const [reminders, setReminders] = useState(true);
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState(false);
+  const linkedKey = useRef<string | null>(null);
 
   useEffect(() => {
     if (!q.data) return;
@@ -37,6 +42,37 @@ export function MyNotifyCard() {
     setReminders(q.data.send_reminders);
     setPicked(new Set(q.data.wallets));
   }, [q.data]);
+
+  // A newly verified (or newly linked) chat ends the code step.
+  const key = q.data ? `${q.data.chat_id}|${q.data.verified}` : null;
+  useEffect(() => {
+    if (!key) return;
+    if (link && linkedKey.current !== null && key !== linkedKey.current && q.data?.verified) {
+      setLink(null);
+      toast.success(t("Chat terhubung"));
+    }
+    linkedKey.current = key;
+  }, [key, link, q.data?.verified, t]);
+
+  async function newCode() {
+    setBusy(true);
+    try {
+      setLink(await createCode());
+    } catch (err) {
+      toast.error(t(errMsg(err)));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copyCode(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(t("Disalin"));
+    } catch {
+      toast.error(t("Gagal menyalin"));
+    }
+  }
 
   const d = q.data;
   const problem =
@@ -119,11 +155,66 @@ export function MyNotifyCard() {
             </p>
             {problem ? <p className="text-xs text-expense">{t(problem)}</p> : null}
             <p className="text-xs text-muted-foreground">
-              {t(
-                "Isi hanya chat ID Anda sendiri atau grup yang setuju menerima laporan. Chat ID belum diverifikasi; admin melihatnya sebagai “diatur anggota”.",
-              )}
+              {d.link_ready
+                ? t(
+                    "Chat ID yang diketik sendiri baru menerima notifikasi setelah diverifikasi lewat /link.",
+                  )
+                : t(
+                    "Isi hanya chat ID Anda sendiri atau grup yang setuju menerima laporan. Chat ID belum diverifikasi; admin melihatnya sebagai “diatur anggota”.",
+                  )}
             </p>
           </div>
+          {d.link_ready ? (
+            <div className="space-y-2 rounded-lg border p-3">
+              {d.chat_id ? (
+                d.verified ? (
+                  <p className="flex items-center gap-1.5 text-sm text-income">
+                    <CheckCircle2 className="size-4" /> {t("Chat terverifikasi")}
+                  </p>
+                ) : (
+                  <div className="space-y-1">
+                    <Badge variant="outline">{t("Belum diverifikasi")}</Badge>
+                    <p className="text-xs text-muted-foreground">
+                      {t(
+                        "Chat ini belum diverifikasi, jadi belum menerima notifikasi. Buat kode lalu kirim /link dari chat tersebut.",
+                      )}
+                    </p>
+                  </div>
+                )
+              ) : null}
+              {link ? (
+                <div className="space-y-1.5">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <code className="num min-w-0 flex-1 truncate rounded-md bg-muted px-2 py-1.5 text-sm">
+                      /link {link.code}
+                    </code>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => copyCode(`/link ${link.code}`)}
+                      aria-label={t("Salin")}
+                    >
+                      <Copy className="size-4" />
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {t(
+                      "Kirim pesan ini ke bot dari chat tujuan (chat pribadi, atau grup sambil menyebut bot). Kode sekali pakai.",
+                    )}{" "}
+                    {t("Berlaku sampai")}{" "}
+                    {new Date(link.expires_at).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </p>
+                </div>
+              ) : null}
+              <Button type="button" variant="outline" size="sm" disabled={busy} onClick={newCode}>
+                {t("Buat kode /link")}
+              </Button>
+            </div>
+          ) : null}
           <div className="space-y-2">
             <label className="flex items-center justify-between gap-3 text-sm">
               {t("Laporan terjadwal")}

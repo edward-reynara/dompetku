@@ -32,6 +32,8 @@ export type NotifyEntry = {
   wallets: string[];
   /** "member" = chat id set by the member in Profil, not verified (#122). */
   set_by?: "member" | "admin" | null;
+  /** v28 (#133): false = waiting for the member's /link; undefined before v28. */
+  verified?: boolean;
 };
 
 type Member = {
@@ -161,12 +163,23 @@ export function NotifyDialog({
                   {maskChatId(chatId)}
                 </span>
                 <Badge variant="outline">{t("Diatur anggota")}</Badge>
+                {current?.verified !== undefined ? (
+                  <Badge variant="outline">
+                    {current.verified ? t("Chat terverifikasi") : t("Belum diverifikasi")}
+                  </Badge>
+                ) : null}
                 <Button type="button" variant="ghost" size="sm" onClick={() => setEditChat(true)}>
                   {t("Ubah")}
                 </Button>
               </div>
             )}
-            {memberSet ? (
+            {current?.verified === false ? (
+              <p className="rounded-lg border border-dashed p-2 text-xs text-muted-foreground">
+                {t(
+                  "Belum diverifikasi lewat /link: anggota ini belum menerima notifikasi sampai mengirim kode dari chat tersebut.",
+                )}
+              </p>
+            ) : memberSet && current?.verified === undefined ? (
               <p className="rounded-lg border border-dashed p-2 text-xs text-muted-foreground">
                 {t(
                   "Chat ID ini diisi sendiri oleh anggota dan belum diverifikasi. Pastikan itu chat pribadinya atau grup yang setuju menerima laporan; matikan Aktif untuk menghentikannya.",

@@ -9,11 +9,19 @@
  * - Members: scope = wallets they may view (account_permissions), narrowed by their checklist.
  * - Missing v22 tables → owner only (never throws for that), so the endpoint works before v22.
  */
+import { createHash, randomBytes } from "crypto";
 import { db } from "./db.server";
+import type { TablesInsert } from "./database.types";
 import { isMissingTable, logActivity } from "./finance.server";
 import { grantsFromRows, type Level } from "./permissions";
 import {
+  formatLinkCode,
+  isChatVerified,
+  LINK_CODE_TTL_MS,
+  linkCodeFrom,
   maskChatId,
+  nextVerifiedAt,
+  normalizeChatId,
   notifySetByMap,
   planRecipients,
   planSelfNotify,
@@ -39,7 +47,41 @@ type RecipientRow = {
   send_report: boolean;
   send_reminders: boolean;
   updated_at?: string | null;
+  /** v28; undefined when the column does not exist yet (= verified, v22 behaviour). */
+  verified_at?: string | null;
 };
+
+const MISSING_V28 =
+  "Verifikasi chat lewat bot belum aktif — jalankan bagian v28 di supabase/schema.sql.";
+const RECIPIENT_COLS = "user_id, chat_id, enabled, send_report, send_reminders";
+
+/** PostgREST reports the optional v28 `verified_at` column as missing. */
+const noVerifiedColumn = (e: { message?: string; code?: string } | null | undefined) =>
+  !!e && (e.code === "42703" || e.code === "PGRST204" || /verified_at/i.test(e.message ?? ""));
+
+/** Recipient rows (all, or one member's), with `verified_at` when v28 is run. */
+async function readRecipients(userId?: string) {
+  const run = (cols: string) => {
+    const q = db().from("notify_recipients").select(cols);
+    return userId ? q.eq("user_id", userId) : q;
+  };
+  let res = await run(`${RECIPIENT_COLS}, verified_at`);
+  if (noVerifiedColumn(res.error)) res = await run(RECIPIENT_COLS);
+  return {
+    error: res.error,
+    data: (res.data ?? []) as unknown as RecipientRow[],
+  };
+}
+
+/** Upserts a recipient row; drops `verified_at` and retries once when v28 is not run. */
+async function upsertRecipient(values: TablesInsert<"notify_recipients">) {
+  let up = await db().from("notify_recipients").upsert(values, { onConflict: "user_id" });
+  if (up.error && "verified_at" in values && noVerifiedColumn(up.error)) {
+    const { verified_at: _v, ...rest } = values;
+    up = await db().from("notify_recipients").upsert(rest, { onConflict: "user_id" });
+  }
+  return up;
+}
 
 export type NotifySettings = {
   user_id: string;
@@ -53,6 +95,8 @@ export type NotifySettings = {
    * verified (the admin dialog flags it); null = unknown (no activity log / older rows).
    */
   set_by?: NotifySetBy | null;
+  /** v28: false = member-set chat id still waiting for `/link` (no notifications). */
+  verified?: boolean;
 };
 
 /** Last saver per member from `activity_log` (best effort: {} when missing or failing). */
@@ -85,9 +129,7 @@ async function notifySetBy(userIds: readonly string[]): Promise<Record<string, N
 export async function listNotifySettings(
   opts: { setBy?: boolean } = {},
 ): Promise<{ ready: boolean; items: NotifySettings[] }> {
-  const rec = await db()
-    .from("notify_recipients")
-    .select("user_id, chat_id, enabled, send_report, send_reminders");
+  const rec = await readRecipients();
   if (rec.error) {
     if (isMissingTable(rec.error)) return { ready: false, items: [] };
     throw new Error(rec.error.message);
@@ -103,7 +145,7 @@ export async function listNotifySettings(
     list.push(w.account_id);
     byUser.set(w.user_id, list);
   }
-  const rows = (rec.data ?? []) as RecipientRow[];
+  const rows = rec.data;
   const setBy = opts.setBy ? await notifySetBy(rows.map((r) => r.user_id)) : {};
   return {
     ready: true,
@@ -115,6 +157,8 @@ export async function listNotifySettings(
       send_reminders: r.send_reminders,
       wallets: (byUser.get(r.user_id) ?? []).sort(),
       set_by: setBy[r.user_id] ?? null,
+      // undefined before v28 (no verification yet), so the admin dialog keeps the v22 wording.
+      ...(r.verified_at === undefined ? {} : { verified: isChatVerified(r.verified_at) }),
     })),
   };
 }
@@ -155,17 +199,26 @@ export async function saveNotifySettings(input: NotifyRecipientInput) {
   const grants = grantsFromRows(perms.data);
   const wallets = [...new Set(input.wallets)].sort();
   if (wallets.some((id) => !grants[id])) throw new Error("Dompet di luar akses anggota");
-  const up = await db().from("notify_recipients").upsert(
-    {
-      user_id: row.id,
-      chat_id: input.chat_id,
-      enabled: input.enabled,
-      send_report: input.send_report,
-      send_reminders: input.send_reminders,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "user_id" },
-  );
+  const cur = await readRecipients(row.id);
+  if (cur.error && !isMissingTable(cur.error)) throw new Error(cur.error.message);
+  const prev = cur.data[0];
+  const now = new Date().toISOString();
+  const up = await upsertRecipient({
+    user_id: row.id,
+    chat_id: input.chat_id,
+    enabled: input.enabled,
+    send_report: input.send_report,
+    send_reminders: input.send_reminders,
+    updated_at: now,
+    // An admin-typed chat id is trusted; an unchanged member-set one stays unverified.
+    verified_at: nextVerifiedAt({
+      prevChatId: prev?.chat_id,
+      prevVerifiedAt: prev?.verified_at,
+      nextChatId: input.chat_id,
+      by: "admin",
+      now,
+    }),
+  });
   if (up.error) {
     if (isMissingTable(up.error)) throw new Error(MISSING_V22);
     throw new Error(up.error.message);
@@ -262,6 +315,10 @@ export type MyNotify = {
   wallets: string[];
   /** Wallets the member may view right now (checklist options). */
   options: { id: string; name: string }[];
+  /** v28: the stored chat id was confirmed with `/link` (or set by the admin). */
+  verified: boolean;
+  /** v28 is run: the card offers a `/link` code. */
+  link_ready: boolean;
 };
 
 /** Fresh wallet grants of a member (never the cached session, never client input). */
@@ -287,14 +344,12 @@ export async function getMyNotify(userId: string): Promise<MyNotify> {
     send_reminders: true,
     wallets: [],
     options: [],
+    verified: false,
+    link_ready: false,
   };
   const grants = await freshGrants(userId);
   if (!grants) return empty;
-  const rec = await db()
-    .from("notify_recipients")
-    .select("user_id, chat_id, enabled, send_report, send_reminders")
-    .eq("user_id", userId)
-    .maybeSingle();
+  const rec = await readRecipients(userId);
   if (rec.error) {
     if (isMissingTable(rec.error)) return empty;
     throw new Error(rec.error.message);
@@ -312,8 +367,12 @@ export async function getMyNotify(userId: string): Promise<MyNotify> {
     ? await db().from("accounts").select("id, name").in("id", view)
     : { data: [], error: null };
   if (names.error) throw new Error(names.error.message);
-  const row = rec.data as RecipientRow | null;
+  const row = rec.data[0] ?? null;
+  // Probe the column (not the row): a member with no row yet still gets the /link button.
+  const probe = await db().from("notify_recipients").select("verified_at").limit(1);
   return {
+    verified: !!row && isChatVerified(row.verified_at),
+    link_ready: !probe.error,
     ready: true,
     chat_id: row?.chat_id ?? "",
     enabled: row?.enabled ?? true,
@@ -340,16 +399,12 @@ export async function saveMyNotify(userId: string, input: MyNotifyInput) {
   const row = await memberOf(userId);
   const grants = await freshGrants(row.id);
   if (!grants) throw new Error(MISSING_V22);
-  const cur = await db()
-    .from("notify_recipients")
-    .select("user_id, chat_id, enabled, send_report, send_reminders")
-    .eq("user_id", row.id)
-    .maybeSingle();
+  const cur = await readRecipients(row.id);
   if (cur.error) {
     if (isMissingTable(cur.error)) throw new Error(MISSING_V22);
     throw new Error(cur.error.message);
   }
-  const curRow = cur.data as RecipientRow | null;
+  const curRow = cur.data[0] ?? null;
   const plan = planSelfNotify(input, grants, { muted: curRow?.enabled === false });
   if (plan.action === "error") throw new Error(plan.error);
   if (plan.action === "keep") return { ok: true };
@@ -381,16 +436,22 @@ export async function saveMyNotify(userId: string, input: MyNotifyInput) {
     const stored = { ...curRow, wallets: (wal.data ?? []).map((w) => w.account_id) };
     if (sameSelfNotify(stored, { ...input, wallets: plan.wallets })) return { ok: true };
   }
-  const up = await db().from("notify_recipients").upsert(
-    {
-      user_id: row.id,
-      chat_id: input.chat_id,
-      send_report: input.send_report,
-      send_reminders: input.send_reminders,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "user_id" },
-  );
+  const now = new Date().toISOString();
+  const up = await upsertRecipient({
+    user_id: row.id,
+    chat_id: input.chat_id,
+    send_report: input.send_report,
+    send_reminders: input.send_reminders,
+    updated_at: now,
+    // v28 (#133): a new chat id typed by the member waits for `/link` before it receives anything.
+    verified_at: nextVerifiedAt({
+      prevChatId: curRow?.chat_id,
+      prevVerifiedAt: curRow?.verified_at,
+      nextChatId: input.chat_id,
+      by: "member",
+      now,
+    }),
+  });
   if (up.error) {
     if (isMissingTable(up.error)) throw new Error(MISSING_V22);
     throw new Error(up.error.message);
@@ -403,6 +464,95 @@ export async function saveMyNotify(userId: string, input: MyNotifyInput) {
     chat: maskChatId(input.chat_id),
   });
   return { ok: true };
+}
+
+/* ---------------- v28 (#133): verify a member's chat with `/link <code>` ---------------- */
+
+const codeHash = (code: string) => createHash("sha256").update(code, "utf8").digest("hex");
+
+/**
+ * A fresh one-time code for the signed-in member (replaces any earlier one). Only its sha256 is
+ * stored; the plain code is returned once for the card to show as `/link ABCD-EFGH`.
+ */
+export async function createLinkCode(
+  userId: string,
+): Promise<{ code: string; expires_at: string }> {
+  const row = await memberOf(userId);
+  const code = linkCodeFrom(new Uint8Array(randomBytes(32)));
+  const now = Date.now();
+  const expires_at = new Date(now + LINK_CODE_TTL_MS).toISOString();
+  // Housekeeping: expired codes of anyone are useless (best effort).
+  await db().from("notify_link_codes").delete().lt("expires_at", new Date(now).toISOString());
+  const up = await db()
+    .from("notify_link_codes")
+    .upsert(
+      {
+        user_id: row.id,
+        code_hash: codeHash(code),
+        expires_at,
+        created_at: new Date(now).toISOString(),
+      },
+      { onConflict: "user_id" },
+    );
+  if (up.error) {
+    if (isMissingTable(up.error)) throw new Error(MISSING_V28);
+    throw new Error(up.error.message);
+  }
+  return { code: formatLinkCode(code), expires_at };
+}
+
+export type LinkResult = { ok: true; name: string } | { ok: false; reason: "invalid" | "missing" };
+
+/**
+ * Bot side of `/link <code>`: claims the code atomically (delete … returning, unexpired only, so a
+ * code works once), then stores THIS chat as the member's verified notification chat. Toggles,
+ * wallet checklist and an admin mute are kept; a new row starts with the v22 defaults. Never adds
+ * the chat to BOT_ALLOWED_CHAT_IDS — it only receives scheduled notifications.
+ */
+export async function linkChatByCode(chatId: string | number, code: string): Promise<LinkResult> {
+  const chat = normalizeChatId(String(chatId));
+  if (!chat) return { ok: false, reason: "invalid" };
+  const now = new Date().toISOString();
+  const claim = await db()
+    .from("notify_link_codes")
+    .delete()
+    .eq("code_hash", codeHash(code))
+    .gt("expires_at", now)
+    .select("user_id");
+  if (claim.error) {
+    if (isMissingTable(claim.error)) return { ok: false, reason: "missing" };
+    throw new Error(claim.error.message);
+  }
+  const userId = claim.data?.[0]?.user_id;
+  if (!userId) return { ok: false, reason: "invalid" };
+  const owner = (process.env["APP_USERNAME"] ?? "").toLowerCase();
+  const user = await db()
+    .from("app_users")
+    .select("id, username, display_name, role, is_active")
+    .eq("id", userId)
+    .maybeSingle();
+  if (user.error) throw new Error(user.error.message);
+  const u = user.data;
+  // The member may have been demoted, disabled or deleted after creating the code.
+  if (!u || u.role !== "member" || !u.is_active || u.username.toLowerCase() === owner)
+    return { ok: false, reason: "invalid" };
+  const up = await db()
+    .from("notify_recipients")
+    .upsert(
+      { user_id: u.id, chat_id: chat, verified_at: now, updated_at: now },
+      { onConflict: "user_id" },
+    );
+  if (up.error) {
+    if (isMissingTable(up.error) || noVerifiedColumn(up.error))
+      return { ok: false, reason: "missing" };
+    throw new Error(up.error.message);
+  }
+  await logActivity("notify.link", "notify_recipients", {
+    name: u.username,
+    user_id: u.id,
+    chat: maskChatId(chat),
+  });
+  return { ok: true, name: u.display_name || u.username };
 }
 
 /** Members with notification rows + their current grants; [] before v22 (or v18). */
@@ -448,6 +598,7 @@ async function notifyMembers(): Promise<NotifyMember[]> {
       send_reminders: s.send_reminders,
       wallets: s.wallets,
       grants,
+      verified: s.verified ?? true,
     });
   }
   return out;
