@@ -1401,6 +1401,23 @@ const DICT: Record<string, string> = {
   "Anggota berhenti menerima notifikasi Telegram": "Member stopped Telegram notifications",
   "Notifikasi anggota diubah": "Member notifications changed",
   "Notifikasi anggota dihapus": "Member notifications removed",
+  /* Chat verification via /link (v28, issue #133) */
+  "Chat anggota diverifikasi lewat bot": "Member chat verified via the bot",
+  "Chat terverifikasi": "Chat verified",
+  "Belum diverifikasi": "Not verified",
+  "Chat ini belum diverifikasi, jadi belum menerima notifikasi. Buat kode lalu kirim /link dari chat tersebut.":
+    "This chat is not verified yet, so it receives nothing. Create a code and send /link from that chat.",
+  "Buat kode /link": "Create /link code",
+  "Kirim pesan ini ke bot dari chat tujuan (chat pribadi, atau grup sambil menyebut bot). Kode sekali pakai.":
+    "Send this message to the bot from the target chat (private chat, or a group while mentioning the bot). Single-use code.",
+  "Berlaku sampai": "Valid until",
+  "Chat terhubung": "Chat connected",
+  "Chat ID yang diketik sendiri baru menerima notifikasi setelah diverifikasi lewat /link.":
+    "A chat ID you type yourself only receives notifications after it is verified with /link.",
+  "Verifikasi chat lewat bot belum aktif — jalankan bagian v28 di supabase/schema.sql.":
+    "Chat verification via the bot is not active yet — run section v28 in supabase/schema.sql.",
+  "Belum diverifikasi lewat /link: anggota ini belum menerima notifikasi sampai mengirim kode dari chat tersebut.":
+    "Not verified with /link: this member receives nothing until they send their code from that chat.",
   "Chat ID admin (notifikasi)": "Admin chat ID (notifications)",
   "Penerima laporan & pengingat terjadwal semua dompet lewat endpoint n8n notifications. Pribadi atau grup (diawali minus). Tidak memberi akses bot.":
     "Receives scheduled all-wallet reports & reminders via the n8n notifications endpoint. Private or group (starts with a minus). Does not grant bot access.",
