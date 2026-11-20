@@ -57,3 +57,17 @@ export const saveMyNotifyFn = createServerFn({ method: "POST" })
     const { saveMyNotify } = await import("./notify.server");
     return saveMyNotify(userId, data);
   });
+
+/**
+ * v28 (#133): a one-time `/link` code for the signed-in member's OWN chat (user id from the
+ * session). The bot stores the chat that sends it as verified; it never grants bot access.
+ */
+export const createMyLinkCodeFn = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .handler(async ({ context }) => {
+    (await import("./demo.server")).assertNotDemo();
+    const { accountScope } = await import("./rbac.server");
+    const userId = selfNotifyUserId(accountScope(context), context.userId);
+    const { createLinkCode } = await import("./notify.server");
+    return createLinkCode(userId);
+  });

@@ -23,7 +23,8 @@ import { z } from "zod";
  * pocket_alerts come last. Older backups without them restore unchanged (pocket_id stays null).
  * invoices (v21) reference accounts; invoice_items / invoice_payments (→ invoices, transactions) follow.
  * notify_recipients / notify_recipient_wallets (v22, per-member Telegram notification chat ids —
- * personal like the profile, not secrets) come after app_users and accounts.
+ * personal like the profile, not secrets) come after app_users and accounts. v28 notify_link_codes
+ * (one-time /link code hashes, 10 min) is never backed up; notify_recipients.verified_at is.
  * v24: payment_methods (→ accounts) before invoice_payment_methods (→ invoices, payment_methods) and
  * invoice_proofs (→ invoices, payment_methods, invoice_payments). Proof images stay in the private
  * `receipts` storage bucket like receipt photos (only the path is backed up). rate_limits is never

@@ -30,6 +30,7 @@ import { withTax } from "./fees";
 import { subMonthly } from "./subscriptions";
 import { isChatAllowed } from "./integrations";
 import { groupAddress, isGroupChat } from "./bot-group";
+import { parseLinkCommand } from "./notify";
 import { scopeIds } from "./permissions";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -73,6 +74,26 @@ const edit = (
   ...(toast ? { toast } : {}),
 });
 
+/** Text for `/link <code>` (v28, #133); a malformed code never touches the DB. */
+async function linkReply(chatId: string, code: string | null): Promise<string> {
+  const invalid =
+    "❌ Kode tidak valid atau sudah kedaluwarsa. Buat kode baru di Profil → Notifikasi Telegram.";
+  if (!code) return invalid;
+  try {
+    const { linkChatByCode } = await import("./notify.server");
+    const r = await linkChatByCode(chatId, code);
+    if (r.ok)
+      return `✅ Chat ini terhubung untuk notifikasi ${r.name}. Laporan & pengingat terjadwal akan dikirim ke sini. Chat ini tetap tidak punya akses ke bot.`;
+    if (r.reason === "missing")
+      return "⚠️ Verifikasi chat belum aktif. Minta admin menjalankan bagian v28.";
+    return invalid;
+  } catch (e) {
+    const { logError } = await import("./monitoring.server");
+    logError("bot:link", e);
+    return "⚠️ Gagal memverifikasi chat. Coba lagi sebentar lagi.";
+  }
+}
+
 /**
  * Required server-side allow-list (defense in depth on top of the n8n filter). Fails closed:
  * an empty or unset BOT_ALLOWED_CHAT_IDS (Settings → Integrasi, else env) refuses every chat.
@@ -101,6 +122,10 @@ export async function handleBotUpdate(u: BotUpdate): Promise<BotReply> {
     if (!g.addressed) return { method: "none", text: "", reply_markup: null };
     u = { ...u, text: g.text };
   }
+  // v28 (#133): `/link <code>` verifies this chat for a member's scheduled notifications. It runs
+  // before the allow-list (notification chats are not bot chats) and only ever replies.
+  const link = u.callback_data ? null : parseLinkCommand(u.text);
+  if (link) return reply(await linkReply(u.chat_id, link.code));
   if (!(await chatAllowed(u.chat_id))) {
     // Refuse before any DB access; echo the chat_id so the owner can add it to the env.
     console.warn(`bot: chat_id ${u.chat_id} ditolak (tidak ada di BOT_ALLOWED_CHAT_IDS)`);

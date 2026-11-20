@@ -82,6 +82,8 @@ export type NotifyMember = {
   send_reminders: boolean;
   wallets: readonly string[];
   grants: Readonly<Record<string, Level>>;
+  /** v28: false = member-set chat id not confirmed with /link yet (skipped). Missing = verified. */
+  verified?: boolean;
 };
 
 export type NotifyTarget = {
@@ -112,7 +114,7 @@ export function planRecipients(input: {
     seen.add(admin);
   }
   for (const m of input.members) {
-    if (m.role !== "member" || !m.is_active || !m.enabled) continue;
+    if (m.role !== "member" || !m.is_active || !m.enabled || m.verified === false) continue;
     if (input.kind === "report" ? !m.send_report : !m.send_reminders) continue;
     const chat = normalizeChatId(m.chat_id);
     if (!chat || chat === admin) continue;
@@ -125,6 +127,70 @@ export function planRecipients(input: {
   }
   return out;
 }
+
+/* ---------------- v28: chat id verification via `/link <code>` (#133) ---------------- */
+
+/** One-time link codes live 10 minutes. */
+export const LINK_CODE_TTL_MS = 10 * 60 * 1000;
+/** No 0/O, 1/I/L or U: easy to read aloud and type on a phone. */
+export const LINK_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTVWXYZ23456789";
+export const LINK_CODE_LENGTH = 8;
+
+/**
+ * An 8-character code from random bytes (rejection sampling, no modulo bias): 30^8 ≈ 6.6e11
+ * combinations, single use and 10 minutes long. Throws when the bytes run out (pass ≥ 32).
+ */
+export function linkCodeFrom(bytes: Uint8Array): string {
+  const n = LINK_CODE_ALPHABET.length;
+  const limit = 256 - (256 % n);
+  let out = "";
+  for (const b of bytes) {
+    if (b >= limit) continue;
+    out += LINK_CODE_ALPHABET[b % n];
+    if (out.length === LINK_CODE_LENGTH) return out;
+  }
+  throw new Error("not enough random bytes for a link code");
+}
+
+/** "ABCD-EFGH" for display; the bot accepts it with or without the dash. */
+export const formatLinkCode = (code: string) => `${code.slice(0, 4)}-${code.slice(4)}`;
+
+/** Upper-cased code without spaces/dashes, or null when it cannot be a link code. */
+export function normalizeLinkCode(raw: string): string | null {
+  const s = raw.toUpperCase().replace(/[\s-]/g, "");
+  if (s.length !== LINK_CODE_LENGTH) return null;
+  return [...s].every((c) => LINK_CODE_ALPHABET.includes(c)) ? s : null;
+}
+
+/**
+ * `/link <code>` (also `/link@bot`), else null. `code` is null for a malformed or missing code so
+ * the bot can answer with the same "invalid or expired" reply without touching the DB.
+ */
+export function parseLinkCommand(text: string | null | undefined): { code: string | null } | null {
+  const m = /^\/link(?:@\w+)?(?:\s+([\s\S]*))?$/i.exec((text ?? "").trim());
+  if (!m) return null;
+  return { code: normalizeLinkCode(m[1] ?? "") };
+}
+
+/**
+ * `verified_at` after a save: a new or changed chat id is verified when the admin typed it and
+ * unverified when the member did (they confirm it with /link); an unchanged chat id keeps its state,
+ * so toggles or wallet edits never verify a chat by accident.
+ */
+export function nextVerifiedAt(input: {
+  prevChatId: string | null | undefined;
+  prevVerifiedAt: string | null | undefined;
+  nextChatId: string;
+  by: NotifySetBy;
+  now: string;
+}): string | null {
+  if (input.prevChatId && input.prevChatId === input.nextChatId)
+    return input.prevVerifiedAt ?? null;
+  return input.by === "admin" ? input.now : null;
+}
+
+/** A row's chat counts as verified unless v28 says otherwise (missing column = verified). */
+export const isChatVerified = (verifiedAt: string | null | undefined) => verifiedAt !== null;
 
 /** Adds "👛 Dompet: A, B" under the first line of a scoped message. */
 export function withWalletLine(text: string, walletNames: readonly string[]): string {
