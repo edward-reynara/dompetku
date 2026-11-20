@@ -24,7 +24,9 @@ describe("year-range", () => {
   });
 
   it("yearRangeYears('10') returns last 10 years ending with current", () => {
-    expect(yearRangeYears("10")).toEqual([2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026]);
+    expect(yearRangeYears("10")).toEqual([
+      2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026,
+    ]);
   });
 
   it("yearRangeYears('custom') with valid range", () => {
@@ -42,6 +44,8 @@ describe("year-range", () => {
 
   it("yearRangeYears('custom') caps at 20 years", () => {
     expect(yearRangeYears("custom", 2000, 2025)).toEqual([2026]); // 26 years → fallback
+    expect(yearRangeYears("custom", 2000, 2020)).toEqual([2026]); // 21 years → fallback
+    expect(yearRangeYears("custom", 2000, 2019)).toHaveLength(20);
   });
 
   it("validateYearRange accepts valid range", () => {
@@ -54,7 +58,8 @@ describe("year-range", () => {
 
   it("validateYearRange rejects non-integers", () => {
     expect(validateYearRange(2020.5, 2025)).toBeNull();
-    expect(validateYearRange("2020", 2025)).toBeNull();
+    expect(validateYearRange(Number.NaN, 2025)).toBeNull();
+    expect(validateYearRange("abc", 2025)).toBeNull();
   });
 
   it("validateYearRange rejects out of bounds", () => {
@@ -64,9 +69,10 @@ describe("year-range", () => {
 
   it("validateYearRange rejects > 20 year span", () => {
     expect(validateYearRange(2000, 2021)).toBeNull(); // 22 years
+    expect(validateYearRange(2000, 2020)).toBeNull(); // 21 years; server caps at 20
   });
 
   it("validateYearRange allows 20 year span exactly", () => {
-    expect(validateYearRange(2000, 2020)).toEqual({ start: 2000, end: 2020 });
+    expect(validateYearRange(2000, 2019)).toEqual({ start: 2000, end: 2019 });
   });
 });

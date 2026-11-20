@@ -6,9 +6,13 @@ export function currentYear(): number {
   return new Date().getUTCFullYear();
 }
 
-export function yearRangeYears(range: YearRange, customStart?: number, customEnd?: number): number[] {
+export function yearRangeYears(
+  range: YearRange,
+  customStart?: number,
+  customEnd?: number,
+): number[] {
   const current = currentYear();
-  
+
   switch (range) {
     case "1":
       return [current];
@@ -20,19 +24,22 @@ export function yearRangeYears(range: YearRange, customStart?: number, customEnd
       if (!customStart || !customEnd) return [current];
       const start = Math.min(customStart, customEnd);
       const end = Math.max(customStart, customEnd);
-      if (end - start > 20) return [current]; // Cap at 20 years
+      if (end - start >= 20) return [current]; // Cap at 20 years
       return Array.from({ length: end - start + 1 }, (_, i) => start + i);
     }
   }
 }
 
-export function validateYearRange(start: unknown, end: unknown): { start: number; end: number } | null {
+export function validateYearRange(
+  start: unknown,
+  end: unknown,
+): { start: number; end: number } | null {
   const s = Number(start);
   const e = Number(end);
   if (!Number.isInteger(s) || !Number.isInteger(e)) return null;
   if (s < 2000 || s > 2100 || e < 2000 || e > 2100) return null;
   const min = Math.min(s, e);
   const max = Math.max(s, e);
-  if (max - min > 20) return null; // Max 20 years
+  if (max - min >= 20) return null; // Max 20 years (inclusive)
   return { start: min, end: max };
 }
