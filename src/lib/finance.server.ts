@@ -1398,7 +1398,17 @@ export async function computeYearly(year: string, account?: string | null) {
 }
 
 export async function computeMultiYear(years: number[], account?: string | null) {
-  if (!years.length) return { years: [], income: 0, expense: 0, net: 0, avgIncome: 0, avgExpense: 0, byYear: [], byCategory: [] };
+  if (!years.length)
+    return {
+      years: [],
+      income: 0,
+      expense: 0,
+      net: 0,
+      avgIncome: 0,
+      avgExpense: 0,
+      byYear: [],
+      byCategory: [],
+    };
   const start = `${years[0]}-01-01`;
   const end = `${years[years.length - 1]! + 1}-01-01`;
   const { fb, js } = reportSource(start, end, account, {});
@@ -1411,7 +1421,9 @@ export async function computeMultiYear(years: number[], account?: string | null)
   const byYear = years.map((y) => {
     const yearStart = `${y}-01-01`;
     const yearEnd = `${y + 1}-01-01`;
-    const yearTotals = totals.filter((t) => t.month >= yearStart.slice(0, 7) && t.month < yearEnd.slice(0, 7));
+    const yearTotals = totals.filter(
+      (t) => t.month >= yearStart.slice(0, 7) && t.month < yearEnd.slice(0, 7),
+    );
     const yearIncome = kindTotal(yearTotals, "income");
     const yearExpense = kindTotal(yearTotals, "expense");
     return { year: y, income: yearIncome, expense: yearExpense, net: yearIncome - yearExpense };

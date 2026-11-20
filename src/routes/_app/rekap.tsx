@@ -62,23 +62,27 @@ function RekapPage() {
   const account = resolveReportAccount(search.account, accounts);
   const setAccount = (a: string | undefined) =>
     void navigate({ search: a ? { account: a } : {}, replace: true });
-  
+
   const years = yearRangeYears(range, customStart, customEnd);
   const isMultiYear = years.length > 1;
-  
+  // A custom range of one year (e.g. 2020–2020) shows that year, not the chevron year.
+  const isCustomYear = range === "custom" && !!customStart && !!customEnd;
+  const shownYear = isCustomYear ? String(years[0]) : year;
+
   const { data: singleYearData } = useQuery({
-    ...yearlyQuery(year, account),
+    ...yearlyQuery(shownYear, account),
     placeholderData: (p) => p,
     enabled: !isMultiYear,
   });
-  
+
   const { data: multiYearData } = useQuery({
     ...multiYearQuery(years, account),
     placeholderData: (p) => p,
     enabled: isMultiYear,
   });
-  
-  const d = isMultiYear ? multiYearData : singleYearData;
+
+  // Keep the last single-year data on screen while a new range loads, so the filter never vanishes.
+  const d = isMultiYear ? (multiYearData ?? singleYearData) : singleYearData;
   const catName = (name: string) => (isTransferCategory(name) ? t(name) : name);
   if (!d) return <RekapSkeleton />;
 
@@ -107,7 +111,7 @@ function RekapPage() {
           customEnd={customEnd}
           onChange={handleRangeChange}
         />
-        {!isMultiYear && (
+        {!isMultiYear && !isCustomYear && (
           <div className="flex items-center gap-2">
             <Button
               size="icon"
@@ -176,7 +180,11 @@ function RekapPage() {
             {money(d.net)}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {d.net >= 0 ? t("Surplus") : t("Defisit")} {isMultiYear ? money(Math.abs(d.avgIncome - d.avgExpense)) : money(Math.abs(d.net / 12))}/{isMultiYear ? t("Per tahun") : t("bln")}
+            {d.net >= 0 ? t("Surplus") : t("Defisit")}{" "}
+            {isMultiYear
+              ? money(Math.abs(d.avgIncome - d.avgExpense))
+              : money(Math.abs(d.net / 12))}
+            /{isMultiYear ? t("Per tahun") : t("bln")}
           </p>
         </Card>
         <Card className="min-w-0 bg-ink p-5 text-ink-foreground">
@@ -195,7 +203,11 @@ function RekapPage() {
         <div className="h-72 short:h-52">
           {isMultiYear && d.byYear ? (
             <CashflowBarChart
-              data={d.byYear.map((y: any) => ({ ...y, month: String(y.year), label: String(y.year) }))}
+              data={d.byYear.map((y: any) => ({
+                ...y,
+                month: String(y.year),
+                label: String(y.year),
+              }))}
               incomeLabel={t("Pemasukan")}
               expenseLabel={t("Pengeluaran")}
             />
