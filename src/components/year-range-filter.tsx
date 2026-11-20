@@ -9,8 +9,8 @@ import { cn } from "@/lib/utils";
 
 type Props = {
   value: YearRange;
-  customStart?: number;
-  customEnd?: number;
+  customStart?: number | undefined;
+  customEnd?: number | undefined;
   onChange: (range: YearRange, customStart?: number, customEnd?: number) => void;
 };
 
@@ -44,9 +44,10 @@ export function YearRangeFilter({ value, customStart, customEnd, onChange }: Pro
     }
   };
 
-  const label = value === "custom" && customStart && customEnd 
-    ? `${customStart}–${customEnd}` 
-    : options.find((o) => o.value === value)?.label ?? t("1 tahun");
+  const label =
+    value === "custom" && customStart && customEnd
+      ? `${customStart}–${customEnd}`
+      : (options.find((o) => o.value === value)?.label ?? t("1 tahun"));
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -67,7 +68,9 @@ export function YearRangeFilter({ value, customStart, customEnd, onChange }: Pro
             size="sm"
             onClick={() => handleSelect("custom")}
           >
-            {value === "custom" && customStart && customEnd ? `${customStart}–${customEnd}` : t("Rentang khusus")}
+            {value === "custom" && customStart && customEnd
+              ? `${customStart}–${customEnd}`
+              : t("Rentang khusus")}
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-64" align="start">

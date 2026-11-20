@@ -341,7 +341,12 @@ export const getYearly = createServerFn({ method: "GET" })
 export const getMultiYear = createServerFn({ method: "GET" })
   .middleware([requireAdmin])
   .inputValidator((d: unknown) =>
-    z.object({ years: z.array(z.number().int().min(2000).max(2100)).min(1).max(20), account: reportAccount }).parse(d),
+    z
+      .object({
+        years: z.array(z.number().int().min(2000).max(2100)).min(1).max(20),
+        account: reportAccount,
+      })
+      .parse(d),
   )
   .handler(async ({ data, context }) => {
     const { computeMultiYear } = await import("./finance.server");

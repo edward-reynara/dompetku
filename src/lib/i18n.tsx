@@ -84,7 +84,7 @@ const DICT: Record<string, string> = {
   "akun aktif": "active accounts",
   "Selisih bulan ini": "This month's net",
   Hutang: "Debt",
-  "Arus kas per bulan": "Cash flow per month",
+  "Arus kas 6 bulan": "Cash flow (6 months)",
   "Arus kas per tahun": "Cash flow per year",
   "Pengeluaran per kategori": "Expenses by category",
   "Belum ada pengeluaran bulan ini.": "No expenses this month yet.",
